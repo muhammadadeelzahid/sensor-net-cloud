@@ -5,8 +5,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 
-	"github.com/soheilhy/cmux"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
@@ -46,44 +48,32 @@ func main() {
 	// Enable reflection for development/testing
 	reflection.Register(grpcSrv)
 
-	// Start listening
-	listener, err := net.Listen("tcp", "0.0.0.0:"+port)
-	if err != nil {
-		log.Fatalf("Failed to listen on port %s: %v", port, err)
-	}
-
-	// Set up cmux
-	m := cmux.New(listener)
-	grpcL := m.Match(cmux.HTTP2())
-	httpL := m.Match(cmux.HTTP1Fast())
-
 	// Set up HTTP health endpoint
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))
 	})
+
+	// Multiplex gRPC and HTTP
+	mixedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("content-type"), "application/grpc") {
+			grpcSrv.ServeHTTP(w, r)
+		} else {
+			mux.ServeHTTP(w, r)
+		}
+	})
+
+	// Use h2c to handle HTTP/1.1 Upgrade requests from Render proxy
+	h2cHandler := h2c.NewHandler(mixedHandler, &http2.Server{})
+
 	httpSrv := &http.Server{
-		Handler: mux,
+		Addr:    "0.0.0.0:" + port,
+		Handler: h2cHandler,
 	}
 
-	// Start servers
-	go func() {
-		log.Printf("Starting gRPC server on port %s...", port)
-		if err := grpcSrv.Serve(grpcL); err != nil {
-			log.Fatalf("Failed to serve gRPC: %v", err)
-		}
-	}()
-
-	go func() {
-		log.Printf("Starting HTTP server on port %s...", port)
-		if err := httpSrv.Serve(httpL); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Failed to serve HTTP: %v", err)
-		}
-	}()
-
-	// Start cmux
-	if err := m.Serve(); err != nil {
-		log.Fatalf("cmux serve error: %v", err)
+	log.Printf("Starting mixed h2c server on port %s...", port)
+	if err := httpSrv.ListenAndServe(); err != nil {
+		log.Fatalf("Failed to serve: %v", err)
 	}
 }
