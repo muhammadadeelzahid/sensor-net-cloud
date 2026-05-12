@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/soheilhy/cmux"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
@@ -45,26 +46,44 @@ func main() {
 	// Enable reflection for development/testing
 	reflection.Register(grpcSrv)
 
-	// Start a simple HTTP server for healthz
-	go func() {
-		http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"status":"ok"}`))
-		})
-		// We can listen on another port, or the same port using cmux, but Render expects a single port.
-		// Wait, if Render only exposes one port (PORT) we can't easily serve both HTTP and gRPC on the same port without multiplexing.
-		// The prompt says "If combining HTTP and gRPC in one service is inconvenient, skip this for the first version".
-		// I will comment this out for now to keep it simple and ensure gRPC works perfectly on the required port.
-	}()
-
 	// Start listening
-	listener, err := net.Listen("tcp", ":"+port)
+	listener, err := net.Listen("tcp", "0.0.0.0:"+port)
 	if err != nil {
 		log.Fatalf("Failed to listen on port %s: %v", port, err)
 	}
 
-	log.Printf("Starting gRPC server on port %s...", port)
-	if err := grpcSrv.Serve(listener); err != nil {
-		log.Fatalf("Failed to serve gRPC: %v", err)
+	// Set up cmux
+	m := cmux.New(listener)
+	grpcL := m.MatchWithWriters(cmux.HTTP2MatchHeaderFieldSendSettings("content-type", "application/grpc"))
+	httpL := m.Match(cmux.HTTP1Fast())
+
+	// Set up HTTP health endpoint
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok"}`))
+	})
+	httpSrv := &http.Server{
+		Handler: mux,
+	}
+
+	// Start servers
+	go func() {
+		log.Printf("Starting gRPC server on port %s...", port)
+		if err := grpcSrv.Serve(grpcL); err != nil {
+			log.Fatalf("Failed to serve gRPC: %v", err)
+		}
+	}()
+
+	go func() {
+		log.Printf("Starting HTTP server on port %s...", port)
+		if err := httpSrv.Serve(httpL); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Failed to serve HTTP: %v", err)
+		}
+	}()
+
+	// Start cmux
+	if err := m.Serve(); err != nil {
+		log.Fatalf("cmux serve error: %v", err)
 	}
 }

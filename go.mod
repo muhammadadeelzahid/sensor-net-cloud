@@ -5,6 +5,7 @@ go 1.26.2
 require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/lib/pq v1.12.3
+	github.com/soheilhy/cmux v0.1.5
 	google.golang.org/grpc v1.81.0
 	google.golang.org/protobuf v1.36.11
 )
