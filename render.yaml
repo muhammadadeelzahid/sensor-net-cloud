@@ -2,6 +2,7 @@ services:
   - type: web
     name: sensor-net-cloud-api
     runtime: docker
+    protocol: http2
     plan: free
     autoDeploy: true
     envVars:
