@@ -56,7 +56,9 @@ func main() {
 
 	// Multiplex gRPC and HTTP
 	mixedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("content-type"), "application/grpc") {
+		log.Printf("Received request: %s %s Proto=%d.%d Content-Type=%s", r.Method, r.URL.Path, r.ProtoMajor, r.ProtoMinor, r.Header.Get("Content-Type"))
+		
+		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
 			grpcSrv.ServeHTTP(w, r)
 		} else {
 			mux.ServeHTTP(w, r)
