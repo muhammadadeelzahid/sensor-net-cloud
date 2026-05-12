@@ -54,7 +54,7 @@ func main() {
 
 	// Set up cmux
 	m := cmux.New(listener)
-	grpcL := m.MatchWithWriters(cmux.HTTP2MatchHeaderFieldSendSettings("content-type", "application/grpc"))
+	grpcL := m.Match(cmux.HTTP2())
 	httpL := m.Match(cmux.HTTP1Fast())
 
 	// Set up HTTP health endpoint
